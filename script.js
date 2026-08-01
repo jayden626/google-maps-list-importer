@@ -3,91 +3,136 @@
 const { chromium } = require("playwright");
 const fs = require("fs-extra");
 const path = require("path");
+const { parseArgs } = require("util");
 
-const {
-  formatTime,
-  appendLine,
-  loadLines,
-  loadPlaces,
-} = require("./utils");
+const { formatTime, appendLine, loadLines, loadPlaces } = require("./utils");
+const { gotoPlace, savePlace, addNote } = require("./maps");
 
-const {
-  gotoPlace,
-  savePlace,
-  addNote,
-} = require("./maps");
+// CLI Flags configuration
+const options = {
+  port:    { type: "string",  short: "p", default: "9222" },
+  check:   { type: "boolean", short: "c", default: false },
+  lists:   { type: "string",  short: "l", default: "./lists" },
+  history: { type: "string",  short: "h", default: "./history" },
+  logs:    { type: "string",  short: "o", default: "./logs" },
+};
+
+// Verifies CDP connection to Chrome without running the full import process
+async function testConnection(cdpUrl) {
+  console.log(`Connecting to Chrome at ${cdpUrl}...`);
+  try {
+    const browser = await chromium.connectOverCDP(cdpUrl);
+    const pages = browser.contexts()[0]?.pages() || [];
+    console.log(`✓ Connected! Tabs: ${pages.length}`);
+    await browser.close();
+    return true;
+  } catch (err) {
+    console.error(`\n✗ Connection failed: ${err.message}`);
+    console.error("Run Chrome: google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/maps-chrome\n");
+    return false;
+  }
+}
 
 (async () => {
+  // Parse command-line arguments
+  const { values } = parseArgs({ options, allowPositionals: true });
+  const cdpUrl = `http://localhost:${values.port}`;
+
+  // Quick connectivity test mode
+  if (values.check) {
+    const ok = await testConnection(cdpUrl);
+    process.exit(ok ? 0 : 1);
+  }
+
   const startTime = Date.now();
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
 
-  const logsDirectory = "./logs";
-  const listDirectory = "./saved-lists";
-  const importDirectory = "./import";
+  const logsDir = values.logs;
+  const historyDir = values.history;
+  const listsDir = values.lists;
 
-  fs.ensureDirSync(logsDirectory);
-  fs.ensureDirSync(listDirectory);
+  // Ensure working directories exist
+  fs.ensureDirSync(logsDir);
+  fs.ensureDirSync(historyDir);
 
-  const savedLog = path.join(logsDirectory, `saved-run-${runId}.txt`);
-  const skippedLog = path.join(logsDirectory, `skipped-run-${runId}.txt`);
-  const failedLog = path.join(logsDirectory, `failed-run-${runId}.txt`);
+  // Validate input directory; create and halt if missing or empty
+  const listsDirExisted = fs.existsSync(listsDir);
+  fs.ensureDirSync(listsDir);
+  const filesInListsDir = fs.readdirSync(listsDir);
 
-  const placesByList = loadPlaces(importDirectory);
+  if (!listsDirExisted || filesInListsDir.length === 0) {
+    console.error(`\n✗ No input files found in "${listsDir}".`);
+    console.error(`  Created directory: ${path.resolve(listsDir)}`);
+    console.error(`  Please drop your Google Takeout CSV or JSON files there and run again.\n`);
+    process.exit(1);
+  }
 
-  const browser = await chromium.connectOverCDP("http://localhost:9222");
-  const page = browser.contexts()[0].pages()[0];
+  // Setup run-specific execution logs (MOVED HERE BEFORE MAIN LOOP)
+  const savedLog = path.join(logsDir, `saved-run-${runId}.txt`);
+  const skippedLog = path.join(logsDir, `skipped-run-${runId}.txt`);
+  const failedLog = path.join(logsDir, `failed-run-${runId}.txt`);
 
-  let totalSaved = 0;
-  let totalSkipped = 0;
-  let totalFailed = 0;
+  // Load and parse Takeout files from input directory
+  const placesByList = loadPlaces(listsDir);
 
+  // Connect to active Chrome instance via CDP
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP(cdpUrl);
+  } catch (err) {
+    console.error(`\n✗ Failed connecting on port ${values.port}. Run 'node script.js --check'\n`);
+    process.exit(1);
+  }
+
+  const page = browser.contexts()[0]?.pages()[0];
+  if (!page) {
+    console.error("✗ No open tabs in Chrome.");
+    process.exit(1);
+  }
+
+  let totalSaved = 0, totalSkipped = 0, totalFailed = 0;
+
+  // Process each Google Maps list
   for (const [list, places] of Object.entries(placesByList)) {
-    const historyFile = path.join(listDirectory, `${list}.txt`);
+    const historyFile = path.join(historyDir, `${list}.txt`);
     const history = loadLines(historyFile);
 
-    let savedCount = 0;
-    let skippedCount = 0;
-    let failedCount = 0;
-
-    // Stores processing times in seconds for actual network/page actions (excludes history skips)
+    let savedCount = 0, skippedCount = 0, failedCount = 0;
     const processingTimes = [];
 
-    console.log("\n==============================");
-    console.log(`List: ${list} (${places.length} places)`);
-    console.log("==============================");
+    console.log(`\n==============================\nList: ${list} (${places.length} places)\n==============================`);
 
+    // Loop through individual places in current list
     for (const [index, { name, note, url }] of places.entries()) {
+      // Skip if URL was processed in a prior run
       if (history.has(url)) {
         skippedCount++;
         appendLine(skippedLog, `${name} | ${list} | ${url}`);
-        console.log(`↪ Skipping [${index + 1}/${places.length}] ${name} (already in history)`);
+        console.log(`↪ Skipping [${index + 1}/${places.length}] ${name} (in history)`);
         continue;
       }
 
       const placeStart = Date.now();
-
       console.log(`[${index + 1}/${places.length}] ${name}\n${url}`);
 
+      // Navigate to Google Maps place page
       if (!(await gotoPlace(page, url))) {
         failedCount++;
         appendLine(failedLog, `${name} | ${list} | ${url}`);
         console.log("✗ Failed loading\n");
-
-        // Count failed loading towards timing
         processingTimes.push((Date.now() - placeStart) / 1000);
         continue;
       }
 
+      // Save place and attach note if available
       try {
         const newlySaved = await savePlace(page, list);
-
         if (newlySaved) {
           savedCount++;
           appendLine(savedLog, `${name} | ${list} | ${url}`);
           console.log(`✓ Saved to "${list}"`);
-
           if (note) {
-            await addNote(page, note);
+            await addNote(page, note, list);
             console.log("✓ Note added");
           }
         } else {
@@ -96,6 +141,7 @@ const {
           console.log(`↪ Already saved in "${list}"`);
         }
 
+        // Record URL in local history
         history.add(url);
         appendLine(historyFile, url);
       } catch (err) {
@@ -104,51 +150,28 @@ const {
         console.log(`✗ Failed saving: ${err.message}`);
       }
 
+      // Calculate runtime metrics & rolling ETA
       const placeTimeSec = (Date.now() - placeStart) / 1000;
       processingTimes.push(placeTimeSec);
 
-      // --- ETA Calculation ---
-      const avgTimeSec =
-        processingTimes.reduce((sum, t) => sum + t, 0) / processingTimes.length;
-      
-      const remainingItems = places.length - (index + 1);
-      const etaSeconds = remainingItems * avgTimeSec;
+      const avgTimeSec = processingTimes.reduce((sum, t) => sum + t, 0) / processingTimes.length;
+      const etaSeconds = (places.length - (index + 1)) * avgTimeSec;
 
-      console.log(
-        `Time ${placeTimeSec.toFixed(1)}s | ` +
-          `Saved ${savedCount} | ` +
-          `Skipped ${skippedCount} | ` +
-          `Failed ${failedCount} | ` +
-          `List ETA: ${formatTime(etaSeconds)}\n`
-      );
+      console.log(`Time ${placeTimeSec.toFixed(1)}s | Saved ${savedCount} | Skipped ${skippedCount} | Failed ${failedCount} | ETA: ${formatTime(etaSeconds)}\n`);
     }
 
     totalSaved += savedCount;
     totalSkipped += skippedCount;
     totalFailed += failedCount;
 
-    console.log("\n------------------------------");
-    console.log(`Finished list: ${list}`);
-    console.log(`Saved: ${savedCount} | Skipped: ${skippedCount} | Failed: ${failedCount}`);
-    console.log("------------------------------");
+    console.log(`\n------------------------------\nFinished list: ${list}\nSaved: ${savedCount} | Skipped: ${skippedCount} | Failed: ${failedCount}\n------------------------------`);
   }
 
+  // Summary output
   const totalTime = (Date.now() - startTime) / 1000;
-
-  console.log("\n==============================");
-  console.log("Finished");
-  console.log("==============================");
+  console.log(`\n==============================\nFinished\n==============================`);
   console.log(`Saved: ${totalSaved} | Skipped: ${totalSkipped} | Failed: ${totalFailed}`);
   console.log(`Total time: ${formatTime(totalTime)}`);
-
-  const totalPlaces = Object.values(placesByList).reduce(
-    (sum, list) => sum + list.length,
-    0,
-  );
-
-  if (totalPlaces) {
-    console.log(`Average: ${formatTime(totalTime / totalPlaces)}/place`);
-  }
 
   await browser.close();
 })();

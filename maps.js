@@ -10,9 +10,7 @@ async function addToList(page, list) {
     timeout: 5000,
   });
 
-  const checked = await listButton.getAttribute(
-    "aria-checked",
-  );
+  const checked = await listButton.getAttribute("aria-checked");
 
   if (checked === "true") {
     return false;
@@ -67,8 +65,14 @@ async function savePlace(page, list) {
   return addToList(page, list);
 }
 
-async function addNote(page, note) {
-  const noteBox = page.locator('textarea[aria-label="Add note"]');
+async function addNote(page, note, list) {
+  // Target the container specific to this list group
+  const listContainer = page.getByRole("group", {
+    name: new RegExp(`Saved in ${list}`, "i"),
+  });
+
+  // Target the note textarea inside that specific list section
+  const noteBox = listContainer.locator('textarea[aria-label="Add note"]').first();
 
   await noteBox.waitFor({
     state: "visible",
@@ -77,16 +81,22 @@ async function addNote(page, note) {
 
   await noteBox.fill(note);
 
-  await page.locator(
-    'button[aria-label="Hide place lists details"]',
-  ).click();
+  // Close the list drawer
+  const closeButton = page
+    .locator('button[aria-label="Hide place lists details"]')
+    .first();
 
-  await page.getByText(note, {
-    exact: true,
-  }).waitFor({
-    state: "visible",
-    timeout: 5000,
-  });
+  if (await closeButton.isVisible()) {
+    await closeButton.click();
+  }
+
+  await page
+    .getByText(note, { exact: true })
+    .first()
+    .waitFor({
+      state: "visible",
+      timeout: 5000,
+    });
 }
 
 module.exports = {
