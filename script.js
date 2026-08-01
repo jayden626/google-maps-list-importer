@@ -1,4 +1,4 @@
-// script.js
+#!/usr/bin/env node
 
 const { chromium } = require("playwright");
 const fs = require("fs-extra");
