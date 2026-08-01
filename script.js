@@ -34,11 +34,9 @@ async function testConnection(cdpUrl) {
 }
 
 (async () => {
-  // Parse command-line arguments
   const { values } = parseArgs({ options, allowPositionals: true });
   const cdpUrl = `http://localhost:${values.port}`;
 
-  // Quick connectivity test mode
   if (values.check) {
     const ok = await testConnection(cdpUrl);
     process.exit(ok ? 0 : 1);
@@ -51,11 +49,13 @@ async function testConnection(cdpUrl) {
   const historyDir = values.history;
   const listsDir = values.lists;
 
-  // Ensure working directories exist
+  // Dedicated directory for this specific run: logs/run_{runID}/
+  const currentRunDir = path.join(logsDir, `run_${runId}`);
+  const failuresDir = path.join(currentRunDir, "failures");
+
   fs.ensureDirSync(logsDir);
   fs.ensureDirSync(historyDir);
 
-  // Validate input directory; create and halt if missing or empty
   const listsDirExisted = fs.existsSync(listsDir);
   fs.ensureDirSync(listsDir);
   const filesInListsDir = fs.readdirSync(listsDir);
@@ -67,15 +67,14 @@ async function testConnection(cdpUrl) {
     process.exit(1);
   }
 
-  // Setup run-specific execution logs (MOVED HERE BEFORE MAIN LOOP)
-  const savedLog = path.join(logsDir, `saved-run-${runId}.txt`);
-  const skippedLog = path.join(logsDir, `skipped-run-${runId}.txt`);
-  const failedLog = path.join(logsDir, `failed-run-${runId}.txt`);
+  // Ensure execution folder exists for this run
+  fs.ensureDirSync(currentRunDir);
 
-  // Load and parse Takeout files from input directory
+  const savedLog = path.join(currentRunDir, "saved.txt");
+  const skippedLog = path.join(currentRunDir, "skipped.txt");
+
   const placesByList = loadPlaces(listsDir);
 
-  // Connect to active Chrome instance via CDP
   let browser;
   try {
     browser = await chromium.connectOverCDP(cdpUrl);
@@ -91,20 +90,22 @@ async function testConnection(cdpUrl) {
   }
 
   let totalSaved = 0, totalSkipped = 0, totalFailed = 0;
+  const missingLists = [];
+  const failedListFiles = [];
 
-  // Process each Google Maps list
   for (const [list, places] of Object.entries(placesByList)) {
     const historyFile = path.join(historyDir, `${list}.txt`);
     const history = loadLines(historyFile);
+
+    // List-specific log inside failures/
+    const listFailedLog = path.join(failuresDir, `${list}.txt`);
 
     let savedCount = 0, skippedCount = 0, failedCount = 0;
     const processingTimes = [];
 
     console.log(`\n==============================\nList: ${list} (${places.length} places)\n==============================`);
 
-    // Loop through individual places in current list
     for (const [index, { name, note, url }] of places.entries()) {
-      // Skip if URL was processed in a prior run
       if (history.has(url)) {
         skippedCount++;
         appendLine(skippedLog, `${name} | ${list} | ${url}`);
@@ -115,16 +116,17 @@ async function testConnection(cdpUrl) {
       const placeStart = Date.now();
       console.log(`[${index + 1}/${places.length}] ${name}\n${url}`);
 
-      // Navigate to Google Maps place page
       if (!(await gotoPlace(page, url))) {
         failedCount++;
-        appendLine(failedLog, `${name} | ${list} | ${url}`);
+        fs.ensureDirSync(failuresDir);
+        appendLine(listFailedLog, `${name} | ${url} | Reason: Page load failed`);
+        if (!failedListFiles.includes(listFailedLog)) failedListFiles.push(listFailedLog);
+
         console.log("✗ Failed loading\n");
         processingTimes.push((Date.now() - placeStart) / 1000);
         continue;
       }
 
-      // Save place and attach note if available
       try {
         const newlySaved = await savePlace(page, list);
         if (newlySaved) {
@@ -141,16 +143,28 @@ async function testConnection(cdpUrl) {
           console.log(`↪ Already saved in "${list}"`);
         }
 
-        // Record URL in local history
         history.add(url);
         appendLine(historyFile, url);
       } catch (err) {
+        if (err.message.includes("ListNotFound")) {
+          console.error(`\n⚠ WARNING: List "${list}" does not exist on your Google Maps account.`);
+          console.error(`  Skipping remaining ${places.length - index} place(s) in this list...\n`);
+          
+          missingLists.push(list);
+          fs.ensureDirSync(failuresDir);
+          appendLine(listFailedLog, `[LIST MISSING] "${list}" does not exist. Halting on: ${name} (${url})`);
+          if (!failedListFiles.includes(listFailedLog)) failedListFiles.push(listFailedLog);
+          break;
+        }
+
         failedCount++;
-        appendLine(failedLog, `${name} | ${list} | ${url} | ${err.message}`);
+        fs.ensureDirSync(failuresDir);
+        appendLine(listFailedLog, `${name} | ${url} | Error: ${err.message}`);
+        if (!failedListFiles.includes(listFailedLog)) failedListFiles.push(listFailedLog);
+
         console.log(`✗ Failed saving: ${err.message}`);
       }
 
-      // Calculate runtime metrics & rolling ETA
       const placeTimeSec = (Date.now() - placeStart) / 1000;
       processingTimes.push(placeTimeSec);
 
@@ -167,11 +181,36 @@ async function testConnection(cdpUrl) {
     console.log(`\n------------------------------\nFinished list: ${list}\nSaved: ${savedCount} | Skipped: ${skippedCount} | Failed: ${failedCount}\n------------------------------`);
   }
 
-  // Summary output
   const totalTime = (Date.now() - startTime) / 1000;
   console.log(`\n==============================\nFinished\n==============================`);
   console.log(`Saved: ${totalSaved} | Skipped: ${totalSkipped} | Failed: ${totalFailed}`);
   console.log(`Total time: ${formatTime(totalTime)}`);
+
+  // Warning for missing Google Maps lists
+  if (missingLists.length > 0) {
+    console.log(`\n==============================`);
+    console.log(`⚠ MISSING LISTS ACTION REQUIRED`);
+    console.log(`==============================`);
+    console.log(`The following list(s) do not exist in your Google Maps account:`);
+    for (const missingList of missingLists) {
+      console.log(`  - "${missingList}"`);
+    }
+    console.log(`\nPlease create these lists on Google Maps and re-run the script to import them.`);
+  }
+
+  // Instructions for reviewing failures
+  if (failedListFiles.length > 0) {
+    console.log(`\n==============================`);
+    console.log(`⚠ FAILED ITEMS REVIEW`);
+    console.log(`==============================`);
+    console.log(`Some items failed to save during this run.`);
+    console.log(`Failure logs for this run are located at:\n  ${path.resolve(failuresDir)}/`);
+    console.log(`\nPlease manually check each failed log file:`);
+    for (const logPath of failedListFiles) {
+      console.log(`  - ${path.basename(logPath)}`);
+    }
+    console.log(`\nOpen each link manually in your browser to verify or save the place.`);
+  }
 
   await browser.close();
 })();

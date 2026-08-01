@@ -5,10 +5,15 @@ async function addToList(page, list) {
     hasText: list,
   });
 
-  await listButton.waitFor({
-    state: "visible",
-    timeout: 5000,
-  });
+  try {
+    await listButton.waitFor({
+      state: "visible",
+      timeout: 5000,
+    });
+  } catch (err) {
+    // List does not exist on the user's Google Maps account
+    throw new Error(`ListNotFound: "${list}"`);
+  }
 
   const checked = await listButton.getAttribute("aria-checked");
 
@@ -17,7 +22,6 @@ async function addToList(page, list) {
   }
 
   await listButton.click();
-
   await page.waitForTimeout(500);
 
   return true;

@@ -42,6 +42,7 @@ When exporting your data from [Google Takeout](https://takeout.google.com), clic
 * Before running the script, every custom list you want to import must already exist in your Google Maps account with the exact same name as your file.
 * If you have a file called `Coffee Spots.csv`, you must have a list named **Coffee Spots** created on Google Maps before running.
 * *(You do not need to create Starred Places—Google Maps already has that built in).*
+* **Note on Default Lists:** You will need to rename `Favorite places.csv` to `Favorites` (or `Favourites`, depending on your language settings in Google Maps).
 * If a list is missing on Google Maps, the script will skip that file and warn you at the end.
 
 
