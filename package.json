@@ -11,7 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "csv-parse": "^7.0.1",
-    "fast-glob": "^3.3.3",
+    "fs-extra": "^11.4.0",
     "playwright": "^1.62.1"
   }
 }

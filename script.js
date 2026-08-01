@@ -1,303 +1,154 @@
+// script.js
+
 const { chromium } = require("playwright");
-const fs = require("fs");
+const fs = require("fs-extra");
+const path = require("path");
 
 const {
-  sleep,
   formatTime,
-  timestamp,
   appendLine,
   loadLines,
-  findFiles,
-  extractSavedPlaces,
-  extractCSV,
+  loadPlaces,
 } = require("./utils");
 
-const { addToList } = require("./maps");
+const {
+  gotoPlace,
+  savePlace,
+  addNote,
+} = require("./maps");
 
 (async () => {
   const startTime = Date.now();
-
-  let savedCount = 0;
-  let skippedCount = 0;
-  let failedCount = 0;
-  let retryCount = 0;
-
-  const path = require("path");
-
-  const runId = timestamp();
+  const runId = new Date().toISOString().replace(/[:.]/g, "-");
 
   const logsDirectory = "./logs";
+  const listDirectory = "./saved-lists";
+  const importDirectory = "./import";
 
-  if (!fs.existsSync(logsDirectory)) {
-    fs.mkdirSync(logsDirectory);
-  }
+  fs.ensureDirSync(logsDirectory);
+  fs.ensureDirSync(listDirectory);
 
   const savedLog = path.join(logsDirectory, `saved-run-${runId}.txt`);
   const skippedLog = path.join(logsDirectory, `skipped-run-${runId}.txt`);
   const failedLog = path.join(logsDirectory, `failed-run-${runId}.txt`);
 
-  const importDirectory = "./import";
-  const savedPlacesFile = "saved-places-all.txt";
-  const listDirectory = "./saved-lists";
-
-  if (!fs.existsSync(listDirectory)) {
-    fs.mkdirSync(listDirectory);
-  }
-
-  const savedPlacesHistory = loadLines(savedPlacesFile);
-
-  const getListFile = (list) => `${listDirectory}/${list}.txt`;
-
-  console.log(`Scanning ${importDirectory}...`);
-
-  const files = findFiles(importDirectory, [".json", ".csv"]);
-
-  let places = [];
-
-  for (const file of files) {
-    try {
-      if (file.endsWith("Saved Places.json")) {
-        console.log(`Loading ${file}`);
-
-        places.push(...extractSavedPlaces(file));
-      } else if (file.toLowerCase().endsWith(".csv")) {
-        console.log(`Loading ${file}`);
-
-        places.push(...extractCSV(file));
-      }
-    } catch (err) {
-      console.log(`Failed reading ${file}: ${err.message}`);
-    }
-  }
-  return;
-
-  const uniquePlaces = new Map();
-
-  for (const place of places) {
-    uniquePlaces.set(`${place.list}:${place.url}`, place);
-  }
-
-  places = Array.from(uniquePlaces.values());
-
-  console.log(`Found ${places.length} places`);
+  const placesByList = loadPlaces(importDirectory);
 
   const browser = await chromium.connectOverCDP("http://localhost:9222");
+  const page = browser.contexts()[0].pages()[0];
 
-  const context = browser.contexts()[0];
+  let totalSaved = 0;
+  let totalSkipped = 0;
+  let totalFailed = 0;
 
-  const page = context.pages()[0];
+  for (const [list, places] of Object.entries(placesByList)) {
+    const historyFile = path.join(listDirectory, `${list}.txt`);
+    const history = loadLines(historyFile);
 
-  const total = places.length;
+    let savedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
 
-  for (let i = 0; i < total; i++) {
-    const placeStart = Date.now();
+    // Stores processing times in seconds for actual network/page actions (excludes history skips)
+    const processingTimes = [];
 
-    const { name, note, url, list } = places[i];
+    console.log("\n==============================");
+    console.log(`List: ${list} (${places.length} places)`);
+    console.log("==============================");
 
-    const historyFile =
-      list === "Starred places" ? savedPlacesFile : getListFile(list);
-
-    const history =
-      list === "Starred places" ? savedPlacesHistory : loadLines(historyFile);
-
-    if (history.has(url)) {
-      skippedCount++;
-
-      appendLine(skippedLog, `${name} | ${list} | ${url}`);
-
-      continue;
-    }
-
-    console.log(`[${i + 1}/${total}] ${name}`);
-
-    console.log(url);
-    console.log(`List: ${list}`);
-
-    let loaded = false;
-
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await page.goto(url, {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
-        });
-
-        if (page.url().includes("/sorry/")) {
-          throw new Error("Google challenge page");
-        }
-
-        loaded = true;
-        break;
-      } catch (err) {
-        if (attempt < 3) {
-          retryCount++;
-
-          console.log(`⚠ Navigation retry (${attempt}/3)`);
-
-          await sleep(30000 * attempt);
-        }
+    for (const [index, { name, note, url }] of places.entries()) {
+      if (history.has(url)) {
+        skippedCount++;
+        appendLine(skippedLog, `${name} | ${list} | ${url}`);
+        console.log(`↪ Skipping [${index + 1}/${places.length}] ${name} (already in history)`);
+        continue;
       }
-    }
 
-    if (!loaded) {
-      failedCount++;
+      const placeStart = Date.now();
 
-      appendLine(failedLog, `${name} | ${list} | ${url}`);
+      console.log(`[${index + 1}/${places.length}] ${name}\n${url}`);
 
-      console.log("✗ Failed loading");
-    } else {
+      if (!(await gotoPlace(page, url))) {
+        failedCount++;
+        appendLine(failedLog, `${name} | ${list} | ${url}`);
+        console.log("✗ Failed loading\n");
+
+        // Count failed loading towards timing
+        processingTimes.push((Date.now() - placeStart) / 1000);
+        continue;
+      }
+
       try {
-        const saveButton = page.getByRole("button", {
-          name: "Save",
-          exact: true,
-        });
+        const newlySaved = await savePlace(page, list);
 
-        const savedButton = page.locator(
-          'button[aria-label^="Saved"]:not([aria-label^="Saved in"])'
-        );
+        if (newlySaved) {
+          savedCount++;
+          appendLine(savedLog, `${name} | ${list} | ${url}`);
+          console.log(`✓ Saved to "${list}"`);
 
-        await Promise.race([
-          saveButton.waitFor({
-            state: "visible",
-            timeout: 10000,
-          }),
-
-          savedButton.waitFor({
-            state: "visible",
-            timeout: 10000,
-          }),
-        ]);
-
-        let newlySaved = false;
-
-        const notSaved = await saveButton.isVisible().catch(() => false);
-
-        if (notSaved) {
-          console.log("Not saved. Saving...");
-
-          await saveButton.click();
-
-          await page.waitForTimeout(1000);
-
-          if (await addToList(page, list)) {
-            newlySaved = true;
-            savedCount++;
-
-            console.log("✓ Saved");
+          if (note) {
+            await addNote(page, note);
+            console.log("✓ Note added");
           }
         } else {
-          console.log("Saved already. Opening list menu...");
-
-          await savedButton.click();
-
-          await page.waitForTimeout(1000);
-
-          if (await addToList(page, list)) {
-            newlySaved = true;
-            savedCount++;
-
-            console.log(`✓ Added to "${list}"`);
-          } else {
-            skippedCount++;
-
-            console.log(`↪ Already saved in "${list}"`);
-          }
-        }
-        if (newlySaved && note) {
-          const noteBox = page.locator('textarea[aria-label="Add note"]');
-
-          await noteBox.waitFor({
-            state: "visible",
-            timeout: 5000,
-          });
-
-          await noteBox.fill(note);
-
-          const hideDetailsButton = page.locator(
-            'button[aria-label="Hide place lists details"]',
-          );
-
-          await hideDetailsButton.waitFor({
-            state: "visible",
-            timeout: 5000,
-          });
-
-          await hideDetailsButton.click();
-
-          await page
-            .getByText(note, {
-              exact: true,
-            })
-            .waitFor({
-              state: "visible",
-              timeout: 5000,
-            });
-
-          console.log("✓ Note added");
+          skippedCount++;
+          appendLine(skippedLog, `${name} | ${list} | ${url}`);
+          console.log(`↪ Already saved in "${list}"`);
         }
 
         history.add(url);
-
         appendLine(historyFile, url);
-
-        appendLine(savedLog, `${name} | ${list} | ${url}`);
       } catch (err) {
         failedCount++;
-
-        appendLine(failedLog, `${name} | ${list} | ${url}`);
-
-        console.log("✗ Failed saving");
-
-        console.log(err.message);
+        appendLine(failedLog, `${name} | ${list} | ${url} | ${err.message}`);
+        console.log(`✗ Failed saving: ${err.message}`);
       }
+
+      const placeTimeSec = (Date.now() - placeStart) / 1000;
+      processingTimes.push(placeTimeSec);
+
+      // --- ETA Calculation ---
+      const avgTimeSec =
+        processingTimes.reduce((sum, t) => sum + t, 0) / processingTimes.length;
+      
+      const remainingItems = places.length - (index + 1);
+      const etaSeconds = remainingItems * avgTimeSec;
+
+      console.log(
+        `Time ${placeTimeSec.toFixed(1)}s | ` +
+          `Saved ${savedCount} | ` +
+          `Skipped ${skippedCount} | ` +
+          `Failed ${failedCount} | ` +
+          `List ETA: ${formatTime(etaSeconds)}\n`
+      );
     }
 
-    const elapsed = (Date.now() - startTime) / 1000;
+    totalSaved += savedCount;
+    totalSkipped += skippedCount;
+    totalFailed += failedCount;
 
-    const processed = i + 1;
-
-    const average = elapsed / processed;
-
-    const eta = average * (total - processed);
-
-    const placeTime = (Date.now() - placeStart) / 1000;
-
-    console.log(
-      `Time ${placeTime.toFixed(1)}s | ` +
-        `Saved ${savedCount} | ` +
-        `Skipped ${skippedCount} | ` +
-        `Failed ${failedCount}`,
-    );
-
-    console.log(
-      `Elapsed ${formatTime(elapsed)} | ` + `ETA ${formatTime(eta)}\n`,
-    );
+    console.log("\n------------------------------");
+    console.log(`Finished list: ${list}`);
+    console.log(`Saved: ${savedCount} | Skipped: ${skippedCount} | Failed: ${failedCount}`);
+    console.log("------------------------------");
   }
 
   const totalTime = (Date.now() - startTime) / 1000;
 
-  console.log("==============================");
+  console.log("\n==============================");
   console.log("Finished");
   console.log("==============================");
-
-  console.log(`Total places: ${total}`);
-
-  console.log(`Saved this run: ${savedCount}`);
-
-  console.log(`Skipped: ${skippedCount}`);
-
-  console.log(`Failed: ${failedCount}`);
-
-  console.log(`Retries: ${retryCount}`);
-
+  console.log(`Saved: ${totalSaved} | Skipped: ${totalSkipped} | Failed: ${totalFailed}`);
   console.log(`Total time: ${formatTime(totalTime)}`);
 
-  if (total > 0) {
-    console.log(`Average: ${(totalTime / total).toFixed(2)}s/place`);
+  const totalPlaces = Object.values(placesByList).reduce(
+    (sum, list) => sum + list.length,
+    0,
+  );
+
+  if (totalPlaces) {
+    console.log(`Average: ${formatTime(totalTime / totalPlaces)}/place`);
   }
 
-  // Disconnect Playwright without closing Chrome
   await browser.close();
-
-  process.exit(0);
 })();

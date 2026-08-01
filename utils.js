@@ -1,29 +1,24 @@
 // utils.js
 
-const fs = require("fs");
+const fs = require("fs-extra");
 const path = require("path");
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const { parse } = require("csv-parse/sync");
 
 function formatTime(seconds) {
-  seconds = Math.round(seconds);
+  const totalSeconds = Math.round(seconds);
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
 
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-
-  if (h) return `${h}h ${m}m ${s}s`;
-  if (m) return `${m}m ${s}s`;
-  return `${s}s`;
-}
-
-function timestamp() {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
 }
 
 function appendLine(file, text) {
-  fs.appendFileSync(file, text + "\n");
+  fs.appendFileSync(file, `${text}\n`);
 }
+
 
 function loadLines(file) {
   if (!fs.existsSync(file)) {
@@ -33,125 +28,124 @@ function loadLines(file) {
   return new Set(
     fs
       .readFileSync(file, "utf8")
-      .split("\n")
-      .map((x) => x.trim())
+      .split(/\r?\n/)
+      .map((line) => line.trim())
       .filter(Boolean),
   );
 }
 
-function findFiles(dir, extensions) {
-  if (!fs.existsSync(dir)) {
-    return [];
-  }
-
-  let results = [];
-
-  for (const entry of fs.readdirSync(dir, {
-    withFileTypes: true,
-  })) {
-    const full = path.join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      results.push(...findFiles(full, extensions));
-    } else if (
-      entry.isFile() &&
-      extensions.includes(path.extname(entry.name).toLowerCase())
-    ) {
-      results.push(full);
-    }
-  }
-
-  return results;
-}
 
 function extractSavedPlaces(file) {
-  let content = fs.readFileSync(file, "utf8").replace(/,\s*([\]}])/g, "$1");
+  const content = fs
+    .readFileSync(file, "utf8")
+    .replace(/,\s*([\]}])/g, "$1");
 
   const json = JSON.parse(content);
 
-  if (json.type !== "FeatureCollection" || !Array.isArray(json.features)) {
+  if (
+    json.type !== "FeatureCollection" ||
+    !Array.isArray(json.features)
+  ) {
     return [];
   }
 
   return json.features
     .map((feature) => {
-      const p = feature.properties || {};
-      const l = p.location || {};
+      const properties = feature.properties || {};
+      const location = properties.location || {};
 
       return {
-        name: l.name || "Unknown place",
+        name: location.name || "Unknown place",
         note: "",
-        url: p.google_maps_url,
+        url: properties.google_maps_url,
         list: "Starred places",
       };
     })
-    .filter((x) => x.url);
+    .filter((place) => place.url);
 }
 
-function parseCSVLine(line) {
-  const values = [];
-
-  let current = "";
-  let quoted = false;
-  console.log(line)
-
-  for (const char of line) {
-    if (char === '"') {
-      quoted = !quoted;
-    } else if (char === "," && !quoted) {
-      values.push(current.trim());
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-
-  values.push(current.trim());
-
-  return values;
-}
 
 function extractCSV(file) {
   const list = path.basename(file, ".csv");
 
-  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+  const content = fs.readFileSync(file, "utf8");
+
+  const rows = parse(content, {
+    skip_empty_lines: true,
+    relax_quotes: true,
+    relax_column_count: true,
+  });
 
   const places = [];
 
-  for (let i = 2; i < lines.length; i++) {
-    const line = lines[i].trim();
-
-    if (!line) {
-      console.log("!line")
-      continue;
-    }
-
-    const [title, note, url] = parseCSVLine(line);
+  // Google Maps export:
+  // row 0 = title/info
+  // row 1 = headers
+  // row 2+ = data
+  for (let i = 2; i < rows.length; i++) {
+    const [title, note, url] = rows[i];
 
     if (!url) {
-      console.log("!url")
       continue;
     }
 
     places.push({
       name: title || "Unknown place",
       note: note || "",
-      url,
+      url: url.trim(),
       list,
     });
   }
-  console.log(places.length)
 
   return places;
 }
 
+
+function loadPlaces(importDirectory) {
+  console.log(`Scanning ${importDirectory}...`);
+
+  if (!fs.existsSync(importDirectory)) {
+    return {};
+  }
+
+  const files = fs
+    .readdirSync(importDirectory)
+    .filter((f) => f.endsWith(".json") || f.toLowerCase().endsWith(".csv"))
+    .map((f) => path.join(importDirectory, f));
+
+  const placesByList = {};
+
+  for (const file of files) {
+    try {
+      console.log(`Loading ${file}`);
+
+      let list;
+      let places;
+
+      if (file.endsWith("Saved Places.json")) {
+        list = "Starred places";
+        places = extractSavedPlaces(file);
+      } else if (file.toLowerCase().endsWith(".csv")) {
+        list = path.basename(file, ".csv");
+        places = extractCSV(file);
+      } else {
+        continue;
+      }
+
+      placesByList[list] = places;
+    } catch (err) {
+      console.log(`Failed reading ${file}: ${err.message}`);
+    }
+  }
+
+  return placesByList;
+}
+
 module.exports = {
-  sleep,
   formatTime,
-  timestamp,
   appendLine,
   loadLines,
-  findFiles,
   extractSavedPlaces,
   extractCSV,
+  loadPlaces,
 };
