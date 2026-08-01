@@ -1,0 +1,17 @@
+{
+  "name": "maps_importer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "csv-parse": "^7.0.1",
+    "fast-glob": "^3.3.3",
+    "playwright": "^1.62.1"
+  }
+}
