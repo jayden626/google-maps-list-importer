@@ -39,6 +39,8 @@ To run this tool, you must have the following installed:
 * This tool will use **Google Chrome** in debugging mode to save each place.
 * So you've gotta have Chrome installed.
 
+**Also** you may want to prevent your computer from sleeping.
+
 ### Getting Your Saved Maps
 
 Export your data from [Google Takeout](https://takeout.google.com). At the top, click **Deselect all**, then check these two options:
