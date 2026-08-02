@@ -198,13 +198,13 @@ async function testConnection(cdpUrl) {
 
         if (err.message.includes("PlaceUnavailable")) {
           console.log(`✗ Place unavailable or dead link (empty save menu)`);
+          history.add(url);
+          appendLine(historyFile, url);
         } else {
           console.log(`✗ Failed saving: ${err.message}`);
         }
 
         failedCount++;
-        history.add(url);
-        appendLine(historyFile, url);
         fs.ensureDirSync(failuresDir);
         appendLine(listFailedLog, `${name} | ${url} | Error: ${err.message}`);
         if (!failedListFiles.includes(listFailedLog)) failedListFiles.push(listFailedLog);
