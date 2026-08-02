@@ -47,6 +47,12 @@ async function testConnection(cdpUrl) {
     process.exit(ok ? 0 : 1);
   }
 
+  if (path.basename(process.cwd()).toLowerCase() === "lists" && values.lists === "./lists") {
+    console.error(`✗ You are already inside a "lists" directory. Move up one folder with 'cd ..' or run with '--lists .'`);
+    process.exit(1);
+  }
+
+
   const startTime = Date.now();
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
 
