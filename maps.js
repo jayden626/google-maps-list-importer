@@ -40,7 +40,7 @@ async function addToList(page, list) {
 
   if (itemCount === 0) {
     // Menu loaded, but contains no lists (Dead place / unhandled place card)
-    throw new Error(`PlaceUnavailable: Place page loaded but lists menu is empty`);
+    throw new Error(`PlaceUnavailable: Place page loaded but lists menu is empty. Probably a dead link`);
   }
 
   const listButton = menuItems.filter({
