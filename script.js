@@ -10,11 +10,13 @@ const { gotoPlace, savePlace, addNote } = require("./maps");
 
 // CLI Flags configuration
 const options = {
-  port:    { type: "string",  short: "p", default: "9222" },
-  check:   { type: "boolean", short: "c", default: false },
-  lists:   { type: "string",  short: "l", default: "./lists" },
-  history: { type: "string",  short: "h", default: "./history" },
-  logs:    { type: "string",  short: "o", default: "./logs" },
+  port:              { type: "string",  short: "p", default: "9222" },
+  check:             { type: "boolean", short: "c", default: false },
+  lists:             { type: "string",  short: "l", default: "./lists" },
+  history:           { type: "string",  short: "h", default: "./history" },
+  logs:              { type: "string",  short: "o", default: "./logs" },
+  "starred-list":    { type: "string",  default: "Starred places" },
+  "saved-places-file": { type: "string", default: "Saved Places.json" },
 };
 
 // Verifies CDP connection to Chrome without running the full import process
@@ -28,7 +30,10 @@ async function testConnection(cdpUrl) {
     return true;
   } catch (err) {
     console.error(`\n✗ Connection failed: ${err.message}`);
-    console.error("Run Chrome: google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/maps-chrome\n");
+    console.error("Run Chrome (Linux): google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/maps-chrome");
+    console.error("Run Chrome (Mac [Untested]): /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/maps-chrome");
+    console.error('Run Chrome (Windows [Untested]): "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\\Google\\Chrome\\MapsUser"');
+    console.error("You may need to open a new terminal once Chrome is running\n");
     return false;
   }
 }
@@ -73,13 +78,16 @@ async function testConnection(cdpUrl) {
   const savedLog = path.join(currentRunDir, "saved.txt");
   const skippedLog = path.join(currentRunDir, "skipped.txt");
 
-  const placesByList = loadPlaces(listsDir);
+  const placesByList = loadPlaces(listsDir, {
+    targetList: values["starred-list"],
+    jsonFileName: values["saved-places-file"],
+  });
 
   let browser;
   try {
     browser = await chromium.connectOverCDP(cdpUrl);
   } catch (err) {
-    console.error(`\n✗ Failed connecting on port ${values.port}. Run 'node script.js --check'\n`);
+    console.error(`\n✗ Failed connecting on port ${values.port}. Run 'npx google-maps-list-importer --check'\n`);
     process.exit(1);
   }
 
@@ -157,12 +165,16 @@ async function testConnection(cdpUrl) {
           break;
         }
 
+        if (err.message.includes("PlaceUnavailable")) {
+          console.log(`✗ Place unavailable or dead link (empty save menu)`);
+        } else {
+          console.log(`✗ Failed saving: ${err.message}`);
+        }
+
         failedCount++;
         fs.ensureDirSync(failuresDir);
         appendLine(listFailedLog, `${name} | ${url} | Error: ${err.message}`);
         if (!failedListFiles.includes(listFailedLog)) failedListFiles.push(listFailedLog);
-
-        console.log(`✗ Failed saving: ${err.message}`);
       }
 
       const placeTimeSec = (Date.now() - placeStart) / 1000;

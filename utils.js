@@ -19,7 +19,6 @@ function appendLine(file, text) {
   fs.appendFileSync(file, `${text}\n`);
 }
 
-
 function loadLines(file) {
   if (!fs.existsSync(file)) {
     return new Set();
@@ -34,8 +33,7 @@ function loadLines(file) {
   );
 }
 
-
-function extractSavedPlaces(file) {
+function extractSavedPlaces(file, targetList = "Starred places") {
   const content = fs
     .readFileSync(file, "utf8")
     .replace(/,\s*([\]}])/g, "$1");
@@ -58,12 +56,11 @@ function extractSavedPlaces(file) {
         name: location.name || "Unknown place",
         note: "",
         url: properties.google_maps_url,
-        list: "Starred places",
+        list: targetList,
       };
     })
     .filter((place) => place.url);
 }
-
 
 function extractCSV(file) {
   const list = path.basename(file, ".csv");
@@ -78,10 +75,6 @@ function extractCSV(file) {
 
   const places = [];
 
-  // Google Maps export:
-  // row 0 = title/info
-  // row 1 = headers
-  // row 2+ = data
   for (let i = 2; i < rows.length; i++) {
     const [title, note, url] = rows[i];
 
@@ -100,8 +93,9 @@ function extractCSV(file) {
   return places;
 }
 
+function loadPlaces(importDirectory, options = {}) {
+  const { targetList = "Starred places", jsonFileName = "Saved Places.json" } = options;
 
-function loadPlaces(importDirectory) {
   console.log(`Scanning ${importDirectory}...`);
 
   if (!fs.existsSync(importDirectory)) {
@@ -122,9 +116,9 @@ function loadPlaces(importDirectory) {
       let list;
       let places;
 
-      if (file.endsWith("Saved Places.json")) {
-        list = "Starred places";
-        places = extractSavedPlaces(file);
+      if (path.basename(file).toLowerCase() === jsonFileName.toLowerCase()) {
+        list = targetList;
+        places = extractSavedPlaces(file, targetList);
       } else if (file.toLowerCase().endsWith(".csv")) {
         list = path.basename(file, ".csv");
         places = extractCSV(file);

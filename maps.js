@@ -1,30 +1,7 @@
 // maps.js
 
-async function addToList(page, list) {
-  const listButton = page.getByRole("menuitemradio").filter({
-    hasText: list,
-  });
-
-  try {
-    await listButton.waitFor({
-      state: "visible",
-      timeout: 5000,
-    });
-  } catch (err) {
-    // List does not exist on the user's Google Maps account
-    throw new Error(`ListNotFound: "${list}"`);
-  }
-
-  const checked = await listButton.getAttribute("aria-checked");
-
-  if (checked === "true") {
-    return false;
-  }
-
-  await listButton.click();
-  await page.waitForTimeout(500);
-
-  return true;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function gotoPlace(page, url) {
@@ -50,6 +27,46 @@ async function gotoPlace(page, url) {
       await sleep(30000 * attempt);
     }
   }
+}
+
+async function addToList(page, list) {
+  // Wait for the menu container itself to appear first
+  const menuContainer = page.locator('div[role="menu"][aria-label="Save in your lists"]');
+  await menuContainer.waitFor({ state: "visible", timeout: 5000 });
+
+  // Check if any lists exist in the menu
+  const menuItems = page.getByRole("menuitemradio");
+  const itemCount = await menuItems.count();
+
+  if (itemCount === 0) {
+    // Menu loaded, but contains no lists (Dead place / unhandled place card)
+    throw new Error(`PlaceUnavailable: Place page loaded but lists menu is empty`);
+  }
+
+  const listButton = menuItems.filter({
+    hasText: list,
+  });
+
+  try {
+    await listButton.waitFor({
+      state: "visible",
+      timeout: 3000,
+    });
+  } catch (err) {
+    // Menu loaded lists, but your specific list was not found on your Google account
+    throw new Error(`ListNotFound: "${list}"`);
+  }
+
+  const checked = await listButton.getAttribute("aria-checked");
+
+  if (checked === "true") {
+    return false;
+  }
+
+  await listButton.click();
+  await page.waitForTimeout(500);
+
+  return true;
 }
 
 async function savePlace(page, list) {
