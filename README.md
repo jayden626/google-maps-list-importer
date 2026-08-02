@@ -137,6 +137,10 @@ To retry all placed, delete the created `history/` folder and run the tool again
 
 You may at some point hit a captcha page. Just complete the captcha and try again.
 
+#### Chrome Crashed
+
+If this happens, just restart Chrome and the tool. It should pick up where it left off. If it keeps happening, try running with a lower `--flush` value. Default is `50`.
+
 ---
 
 ## What Happens Next?
@@ -177,7 +181,7 @@ Developers can customize folder paths, target list names for starred places, and
 | `--saved-places-file` | `Saved Places.json` | The filename of your exported starred places JSON file inside the `lists` folder |
 | `--port`, `-p` | `9222` | Chrome DevTools Protocol port |
 | `--check`, `-c` | `false` | Runs a quick connectivity check to Chrome and exits |
-| `--flush`, `-5` | `50` | Interval to flush the tab. A lower number saves memory, but may be slower. The 'flush' may not actually save memory, idk |
+| `--flush`, `-5` | `50` | Interval to flush the tab. A lower number saves memory, but may be slightly slower.|
 
 #### Custom Usage Examples:
 

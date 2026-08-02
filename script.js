@@ -115,7 +115,7 @@ async function testConnection(cdpUrl) {
   };
 
   // Start importing
-  let totalSaved = 0, totalSkipped = 0, totalFailed = 0;
+  let totalSaved = 0, totalSkipped = 0, totalFailed = 0, totalLoaded = 0;
   const missingLists = [];
   const failedListFiles = [];
   const flushInterval = parseInt(values.flush, 10) || 50;
@@ -127,7 +127,7 @@ async function testConnection(cdpUrl) {
     // List-specific log inside failures/
     const listFailedLog = path.join(failuresDir, `${list}.txt`);
 
-    let savedCount = 0, skippedCount = 0, failedCount = 0;
+    let savedCount = 0, skippedCount = 0, failedCount = 0, loadedCount = 0;
     const processingTimes = [];
 
     console.log(`\n==============================\nList: ${list} (${places.length} places)\n==============================`);
@@ -141,8 +141,7 @@ async function testConnection(cdpUrl) {
       }
 
       // Recycle tab every xx places to save memory.
-      const totalProcessed = totalSaved + savedCount + totalFailed + failedCount;
-      if (totalProcessed > 0 && totalProcessed % flushInterval === 0) {
+      if (totalLoaded > 0 && totalLoaded % flushInterval === 0) {
         try {
           const oldPage = page;
           page = await page.context().newPage();
@@ -151,6 +150,8 @@ async function testConnection(cdpUrl) {
           console.warn(`Failed to flush page: ${err.message}`);
         }
       }
+
+      totalLoaded++;
 
       const placeStart = Date.now();
       console.log(`[${index + 1}/${places.length}] ${name}\n${url}`);
@@ -198,6 +199,11 @@ async function testConnection(cdpUrl) {
 
         if (err.message.includes("PlaceUnavailable")) {
           console.log(`✗ Place unavailable or dead link (empty save menu)`);
+          history.add(url);
+          appendLine(historyFile, url);
+        }
+        else if (err.message.includes("ConfirmNote")) {
+          console.log(`✗ Could not confirm note saved. It probably did. Check failures log for info`);
           history.add(url);
           appendLine(historyFile, url);
         } else {

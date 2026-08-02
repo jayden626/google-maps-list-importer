@@ -110,14 +110,17 @@ async function addNote(page, note, list) {
   if (await closeButton.isVisible()) {
     await closeButton.click();
   }
-
-  await page
+  try {
+    await page
     .getByText(note, { exact: true })
     .first()
     .waitFor({
       state: "visible",
       timeout: 5000,
     });
+  } catch (error) {
+    throw new Error(`ConfirmNote: Could not ensure note was saved. It probably was, but maybe double check`);
+  }
 }
 
 module.exports = {
