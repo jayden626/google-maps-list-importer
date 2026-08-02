@@ -128,7 +128,7 @@ You can leave the script running in the background. It will process your places,
 
 ### If the tool fails
 
-This tool keeps a log of every place it's processed. So, closing the tool and re-opening it will skip every place that was previously tried.
+This tool keeps a log of every place it's processed. So, closing the tool and re-opening it will skip every place that was previously tried. **So just close the tool and run it again**. You can stop the tool with `Ctrl + C` or just close the terminal. Maybe try closing and re-opening chrome.
 To retry all placed, delete the created `history/` folder and run the tool again.
 
 #### Bot Detection
@@ -175,7 +175,7 @@ Developers can customize folder paths, target list names for starred places, and
 | `--saved-places-file` | `Saved Places.json` | The filename of your exported starred places JSON file inside the `lists` folder |
 | `--port`, `-p` | `9222` | Chrome DevTools Protocol port |
 | `--check`, `-c` | `false` | Runs a quick connectivity check to Chrome and exits |
-| `--flush`, `-5` | `50` | Interval to flush the tab. A lower number saves memory, but may be slower |
+| `--flush`, `-5` | `50` | Interval to flush the tab. A lower number saves memory, but may be slower. The 'flush' may not actually save memory, idk |
 
 #### Custom Usage Examples:
 
