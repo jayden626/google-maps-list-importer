@@ -175,6 +175,7 @@ Developers can customize folder paths, target list names for starred places, and
 | `--saved-places-file` | `Saved Places.json` | The filename of your exported starred places JSON file inside the `lists` folder |
 | `--port`, `-p` | `9222` | Chrome DevTools Protocol port |
 | `--check`, `-c` | `false` | Runs a quick connectivity check to Chrome and exits |
+| `--flush`, `-5` | `50` | Interval to flush the tab. A lower number saves memory, but may be slower |
 
 #### Custom Usage Examples:
 

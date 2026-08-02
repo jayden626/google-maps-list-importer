@@ -15,6 +15,7 @@ const options = {
   lists:             { type: "string",  short: "l", default: "./lists" },
   history:           { type: "string",  short: "h", default: "./history" },
   logs:              { type: "string",  short: "o", default: "./logs" },
+  flush:             { type: "string",  short: "f", default: "50" },
   "starred-list":    { type: "string",  default: "Starred places" },
   "saved-places-file": { type: "string", default: "Saved Places.json" },
 };
@@ -52,7 +53,6 @@ async function testConnection(cdpUrl) {
     process.exit(1);
   }
 
-
   const startTime = Date.now();
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
 
@@ -78,9 +78,7 @@ async function testConnection(cdpUrl) {
     process.exit(1);
   }
 
-  // Ensure execution folder exists for this run
   fs.ensureDirSync(currentRunDir);
-
   const savedLog = path.join(currentRunDir, "saved.txt");
   const skippedLog = path.join(currentRunDir, "skipped.txt");
 
@@ -97,15 +95,30 @@ async function testConnection(cdpUrl) {
     process.exit(1);
   }
 
-  const page = browser.contexts()[0]?.pages()[0];
+  let page = browser.contexts()[0]?.pages()[0];
   if (!page) {
     console.error("✗ No open tabs in Chrome.");
     process.exit(1);
   }
 
+  // Ready to start, write logs to file
+  const runLogStream = fs.createWriteStream(path.join(currentRunDir, "output.log"), { flags: "a" });
+  const origStdout = process.stdout.write.bind(process.stdout);
+  const origStderr = process.stderr.write.bind(process.stderr);
+  process.stdout.write = (chunk, encoding, callback) => {
+    runLogStream.write(chunk, encoding);
+    return origStdout(chunk, encoding, callback);
+  };
+  process.stderr.write = (chunk, encoding, callback) => {
+    runLogStream.write(chunk, encoding);
+    return origStderr(chunk, encoding, callback);
+  };
+
+  // Start importing
   let totalSaved = 0, totalSkipped = 0, totalFailed = 0;
   const missingLists = [];
   const failedListFiles = [];
+  const flushInterval = parseInt(values.flush, 10) || 50;
 
   for (const [list, places] of Object.entries(placesByList)) {
     const historyFile = path.join(historyDir, `${list}.txt`);
@@ -125,6 +138,18 @@ async function testConnection(cdpUrl) {
         appendLine(skippedLog, `${name} | ${list} | ${url}`);
         console.log(`↪ Skipping [${index + 1}/${places.length}] ${name} (in history)`);
         continue;
+      }
+
+      // Recycle tab every xx places to save memory.
+      const totalProcessed = totalSaved + savedCount + totalFailed + failedCount;
+      if (totalProcessed > 0 && totalProcessed % flushInterval === 0) {
+        try {
+          const oldPage = page;
+          page = await page.context().newPage();
+          await oldPage.close().catch(() => {});
+        } catch (err) {
+          console.warn(`Failed to flush page: ${err.message}`);
+        }
       }
 
       const placeStart = Date.now();
@@ -178,6 +203,8 @@ async function testConnection(cdpUrl) {
         }
 
         failedCount++;
+        history.add(url);
+        appendLine(historyFile, url);
         fs.ensureDirSync(failuresDir);
         appendLine(listFailedLog, `${name} | ${url} | Error: ${err.message}`);
         if (!failedListFiles.includes(listFailedLog)) failedListFiles.push(listFailedLog);
