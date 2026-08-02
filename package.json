@@ -1,6 +1,6 @@
 {
   "name": "google-maps-list-importer",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Import Google Takeout saved lists and starred places back into Google Maps.",
   "main": "script.js",
   "bin": {
